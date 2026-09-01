@@ -1,0 +1,35 @@
+# --- Secrets (과제 요구사항: 절대 커밋 금지) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+api_keys*
+secrets*
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Python / FastAPI (src/server) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Node / Next.js (src/client) ---
+node_modules/
+.next/
+out/
+build/
+dist/
+npm-debug.log*
+yarn-error.log*
+
+# --- IDE ---
+.vscode/
+.idea/
