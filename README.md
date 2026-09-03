@@ -17,13 +17,6 @@ The system has three roles. A **User** registers coverages and reads the results
 **Week 2 — Deliverable I: Proposal & Checkpoint.**
 This repository is initialized with the required structure and project information. No application code has been committed yet; implementation starts in Week 3.
 
-## Architecture
-
-![CoverageDesk architecture](docs/architecture.svg)
-
-Solid boxes are parts of this system; dashed boxes are external services. The full proposal is
-`docs/proposal.pdf` (Deliverable I, Week 2).
-
 ## Planned Tech Stack
 
 | Layer | Choice |
