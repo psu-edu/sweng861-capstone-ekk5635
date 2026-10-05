@@ -120,3 +120,30 @@ class CoverageFinancialRead(BaseModel):
     filed: date
     source: str
     collected_at: datetime
+
+
+class SummarySource(BaseModel):
+    """One filing a summary's figures were computed from."""
+
+    concept: str
+    accn: str
+    form: str
+    filed: date
+    url: str
+
+
+class CoverageSummaryRead(BaseModel):
+    """The stored summary of a coverage, with the numbers and filings behind it.
+
+    indicators is exactly what was sent to the model, so a reader can check
+    every sentence against it. No coverage_id, as in CoverageFinancialRead.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    period_end: date
+    indicators: dict[str, float | str | None]
+    summary: str
+    model: str
+    sources: list[SummarySource]
+    generated_at: datetime

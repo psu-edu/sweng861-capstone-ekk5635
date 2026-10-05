@@ -203,8 +203,39 @@ async def handle_upstream_error(request: Request, exc: Exception) -> JSONRespons
     )
 
 
+async def handle_summary_error(request: Request, exc: Exception) -> JSONResponse:
+    """The LLM behind summaries failed or is not set up; the rest of the API is fine.
+
+    Same reasoning as handle_upstream_error: 503 when trying again can help, 502
+    when the reply was unusable, and no provider or library named in the body.
+    """
+    from insight import InsightNotConfigured, InsightUnavailable
+
+    incident = uuid.uuid4().hex[:12]
+    logger.warning(
+        "summary failure incident=%s %s %s: %s",
+        incident, request.method, request.url.path, exc,
+    )
+
+    if isinstance(exc, InsightNotConfigured):
+        return error_response(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            "Summaries are not enabled on this server.",
+        )
+    if isinstance(exc, InsightUnavailable):
+        return error_response(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            "The summary service is temporarily unavailable. Try again shortly.",
+            headers={"Retry-After": str(UPSTREAM_RETRY_AFTER_SECONDS)},
+        )
+    return error_response(
+        HTTPStatus.BAD_GATEWAY,
+        "The summary service returned a response this service could not use.",
+    )
+
+
 def install_error_handlers(app: FastAPI) -> None:
-    """Register the three handlers on the application.
+    """Register the error handlers on the application.
 
     Registered in one function rather than as decorators next to the routes so
     that the error contract lives in a single file. An endpoint added later
@@ -219,8 +250,10 @@ def install_error_handlers(app: FastAPI) -> None:
     # contract for the whole service, and it should not fail to import because
     # one feature's client is missing.
     from edgar import EdgarError
+    from insight import InsightError
 
     app.add_exception_handler(StarletteHTTPException, handle_http_exception)
     app.add_exception_handler(EdgarError, handle_upstream_error)
+    app.add_exception_handler(InsightError, handle_summary_error)
     app.add_exception_handler(RequestValidationError, handle_validation_error)
     app.add_exception_handler(Exception, handle_unexpected_error)
