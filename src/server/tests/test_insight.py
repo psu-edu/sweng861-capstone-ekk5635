@@ -110,6 +110,15 @@ def test_the_drift_only_field_is_sent_to_the_course_server(fresh_settings):
     assert json.loads(calls[0].content)["drift_debug"] is False
 
 
+def test_a_malformed_base_url_is_a_configuration_error(fresh_settings):
+    fresh_settings(LLM_BASE_URL="http://llm:port")
+    client, calls = _client()
+
+    with pytest.raises(insight.InsightNotConfigured):
+        insight.request_summary(COMPANY, INDICATORS, client=client)
+    assert calls == []
+
+
 def test_rate_limit_is_not_retried():
     client, calls = _client(httpx.Response(429))
 

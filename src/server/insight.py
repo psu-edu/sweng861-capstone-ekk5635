@@ -126,12 +126,20 @@ def request_summary(
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             response = http.post(url, json=body, headers=headers)
+        except httpx.InvalidURL as exc:
+            # Not an HTTPError subclass; a bad LLM_BASE_URL will not fix itself on retry.
+            logger.error("llm base url is invalid reason=%s", type(exc).__name__)
+            raise InsightNotConfigured("LLM_BASE_URL is not a valid URL") from exc
         except httpx.HTTPError as exc:
             last_reason = f"transport failure ({type(exc).__name__})"
         else:
             status = response.status_code
             if status == 200:
-                return _reply_text(response)
+                try:
+                    return _reply_text(response)
+                except InsightResponseError as exc:
+                    logger.warning("llm reply unusable company=%s reason=%s", company, exc)
+                    raise
             if status == 429:
                 logger.warning("llm rate limit reached company=%s", company)
                 raise InsightUnavailable("LLM rate limit reached; try again later")
@@ -139,6 +147,7 @@ def request_summary(
                 logger.error("llm rejected the API key status=%s", status)
                 raise InsightResponseError(f"LLM rejected the API key ({status})")
             if status not in RETRYABLE_STATUS:
+                logger.warning("llm unexpected status=%s company=%s", status, company)
                 raise InsightResponseError(f"LLM answered {status}")
             last_reason = f"status {status}"
 
