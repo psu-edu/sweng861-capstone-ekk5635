@@ -21,6 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -165,6 +166,9 @@ class Coverage(Base):
     financials: Mapped[list["CoverageFinancial"]] = relationship(
         back_populates="coverage", cascade="all, delete-orphan"
     )
+    summary: Mapped["CoverageSummary | None"] = relationship(
+        back_populates="coverage", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<Coverage id={self.id} owner_id={self.owner_id} cik={self.cik!r}>"
@@ -280,3 +284,33 @@ class CoverageFinancial(Base):
             f"<CoverageFinancial coverage_id={self.coverage_id} "
             f"concept={self.concept!r} period_end={self.period_end}>"
         )
+
+
+class CoverageSummary(Base):
+    """The latest plain-language summary of one coverage and the filings behind it.
+
+    One row per coverage, replaced on each generation. Like coverage_financials
+    it has no owner_id: it is reachable only through a coverage the caller owns.
+    """
+
+    __tablename__ = "coverage_summaries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    coverage_id: Mapped[int] = mapped_column(
+        ForeignKey("coverages.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    # The fiscal year end the indicators describe.
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    # Exactly what was sent to the model, so a summary can be checked against it.
+    indicators: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    sources: Mapped[list] = mapped_column(JSONB, nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    coverage: Mapped["Coverage"] = relationship(back_populates="summary")
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<CoverageSummary coverage_id={self.coverage_id} period_end={self.period_end}>"

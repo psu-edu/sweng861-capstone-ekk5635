@@ -19,6 +19,7 @@ from admin import router as admin_router
 from config import get_settings
 from coverages import router as coverages_router
 from financials import router as financials_router
+from summaries import router as summaries_router
 from db import get_db
 from errors import install_error_handlers
 from health import router as health_router
@@ -76,6 +77,7 @@ app = FastAPI(
 app.include_router(health_router)
 app.include_router(coverages_router)
 app.include_router(financials_router)
+app.include_router(summaries_router)
 app.include_router(admin_router)
 
 # Every failure this service can answer with - a refusal a handler raised, a

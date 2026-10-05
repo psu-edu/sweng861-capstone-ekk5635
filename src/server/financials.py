@@ -24,7 +24,7 @@ from security import AuthenticatedUser, require_auth
 router = APIRouter(prefix="/api/coverages/{coverage_id}/financials", tags=["financials"])
 
 
-def _own_coverage(db: Session, coverage_id: int, user: AuthenticatedUser) -> Coverage:
+def own_coverage(db: Session, coverage_id: int, user: AuthenticatedUser) -> Coverage:
     """The caller's coverage, or the same 404 the coverages API answers with.
 
     Ownership is a term in the WHERE clause rather than a check afterwards, and
@@ -64,7 +64,7 @@ def collect_financials(
     Repeating it is safe. Each row is written by period, and a re-collection
     updates in place rather than adding a second series.
     """
-    coverage = _own_coverage(db, coverage_id, user)
+    coverage = own_coverage(db, coverage_id, user)
 
     collected = collect_coverage(db, coverage)
     db.commit()
@@ -88,7 +88,7 @@ def list_financials(
     screenshot of this response, both read as a time line only if the rows
     arrive in one.
     """
-    coverage = _own_coverage(db, coverage_id, user)
+    coverage = own_coverage(db, coverage_id, user)
 
     return list(
         db.scalars(
