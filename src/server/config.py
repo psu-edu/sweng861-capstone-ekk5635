@@ -21,6 +21,11 @@ load_dotenv()
 # The port `npm run dev` serves the Week 4 single-page app on.
 DEFAULT_FRONTEND_URL = "http://localhost:5173"
 
+# The course DRIFT inference server (Canvas announcement, 2026-08-31). Any
+# OpenAI-compatible server works, e.g. https://api.openai.com with gpt-4o-mini.
+DEFAULT_LLM_BASE_URL = "http://ec2-13-59-66-30.us-east-2.compute.amazonaws.com:8091"
+DEFAULT_LLM_MODEL = "drift"
+
 
 def _required(name: str) -> str:
     value = os.getenv(name)
@@ -44,6 +49,10 @@ class Settings:
     database_url: str
     sec_user_agent: str
     frontend_url: str
+    llm_base_url: str
+    llm_model: str
+    # None means summaries are off; the rest of the app still runs.
+    llm_api_key: str | None
 
 
 @lru_cache(maxsize=1)
@@ -66,4 +75,9 @@ def get_settings() -> Settings:
         # rather than refusing to start. The trailing slash is dropped so the
         # callback can append "/login" without producing "//login".
         frontend_url=os.getenv("FRONTEND_URL", DEFAULT_FRONTEND_URL).rstrip("/"),
+        llm_base_url=os.getenv("LLM_BASE_URL", DEFAULT_LLM_BASE_URL).rstrip("/"),
+        llm_model=os.getenv("LLM_MODEL", DEFAULT_LLM_MODEL),
+        # Optional, unlike the values above: a reviewer without a key must
+        # still be able to run everything except the summary.
+        llm_api_key=os.getenv("LLM_API_KEY") or None,
     )

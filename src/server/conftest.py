@@ -43,6 +43,11 @@ os.environ.update(
         # SEC requires a contact address on every request. A test must never
         # send the developer's real one to data.sec.gov.
         "SEC_USER_AGENT": "SWENG861 Test Suite test@example.invalid",
+        # A fake key and an unroutable host, so no test can spend real LLM
+        # quota or send the developer's personal key anywhere.
+        "LLM_API_KEY": "test-llm-key",
+        "LLM_BASE_URL": "http://llm.example.invalid",
+        "LLM_MODEL": "drift",
     }
 )
 
