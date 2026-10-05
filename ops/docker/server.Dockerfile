@@ -1,0 +1,92 @@
+# The backend image.
+#
+# Two stages. The first installs the dependencies, the second runs the service
+# and carries none of the machinery that installed them: no pip cache, no
+# wheels, no build tools. That is a smaller image, and it is a smaller surface
+# - a toolchain in a running container is what turns a foothold into a build
+# environment for an attacker.
+#
+# The interpreter is pinned, and pinned to a version that was measured rather
+# than assumed. The repository had no Python version anywhere - not in
+# requirements.txt, not in a workflow, not here - so "which Python" was decided
+# by whatever each machine happened to have. The suite was run inside
+# python:3.12-slim, 3.13-slim and 3.14-slim before this line was written and
+# passes on all three; 3.14 is chosen because it is what the service is
+# developed and tested against on the host, so the container and the laptop
+# cannot drift apart.
+#
+# AI use: drafted with Claude and verified by building and running the stack.
+
+# ---------------------------------------------------------------------------
+# Stage 1 - dependencies
+# ---------------------------------------------------------------------------
+FROM python:3.14-slim AS builder
+
+# A virtualenv rather than the system site-packages, so the second stage can
+# take the dependencies as one directory and leave everything else behind.
+ENV VIRTUAL_ENV=/opt/venv
+RUN python -m venv "$VIRTUAL_ENV"
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+WORKDIR /app
+
+# Copied on its own, before the source. Docker caches a layer until its inputs
+# change, so editing a handler does not reinstall SQLAlchemy - which is the
+# difference between a five-second rebuild and a two-minute one during the
+# work this image exists to support.
+COPY src/server/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+# The service never installs anything, and pip's vendored urllib3 and msgpack fail the image scan.
+RUN pip uninstall -y pip
+
+# ---------------------------------------------------------------------------
+# Stage 2 - runtime
+# ---------------------------------------------------------------------------
+FROM python:3.14-slim AS runtime
+
+# Unbuffered so log lines appear when they are written rather than when the
+# buffer fills. A container's stdout is its log, and a crash would otherwise
+# take the last few lines of explanation with it.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+
+# Security fixes published since the base image was built; the system pip goes for the same reason as the venv's.
+# The interpreter is named so the line removes the system pip wherever it sits relative to the venv copy.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && /usr/local/bin/python -m pip uninstall -y pip
+
+# A non-root user, created before anything is copied in. The default is root,
+# and a process that never needs to write outside its own directory has no
+# reason to run as the account that can write anywhere - including to the
+# mounted volumes of anything else that shares this daemon.
+RUN useradd --create-home --uid 10001 app
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+# Ownership is set during the copy rather than by a later chown: a chown on a
+# copied tree writes a second full copy of it into the next layer.
+# Only the server. The client is a separate image, so this one carries no page.
+# The build context is the repository root, as compose sets it.
+COPY --chown=app:app src/server/ /app/
+
+USER app
+
+EXPOSE 8000
+
+# Readiness: the gateway starts only once the API reaches its database; this does not stop traffic later.
+# urllib because the slim image has no curl; a 503 raises, so the probe exits non-zero.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2.5).status == 200 else 1)"
+
+# No migration runs here. The application stopped creating its own schema in
+# #23, for the reason that a service which alters tables as it boots cannot be
+# started twice safely - and an entrypoint that migrated would put that back,
+# one layer down. Compose runs the migration once, in its own service, before
+# this one starts.
+# The request middleware writes the access line as JSON, without the query string.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

@@ -1,0 +1,48 @@
+# What must never enter the build context.
+#
+# This sits at the repository root because that is the build context compose
+# sets for both images. Docker reads only the .dockerignore at the root of the
+# context, so a copy one level down would silently disable every rule in it.
+#
+# This file is a security control before it is an optimisation. Everything
+# listed here would otherwise be sent to the daemon and be available to any
+# COPY - including one added later by someone who did not read the Dockerfile.
+
+# The real secrets. .env holds the Google client secret, the session signing
+# key and the database password. It is git-ignored, which says nothing about
+# Docker: without this line a `COPY . .` bakes all three into a layer that
+# survives deletion in a later step, because layers are not editable.
+**/.env
+
+# A 112 MB virtualenv built for the host's interpreter and the host's
+# architecture. The image builds its own; copying this one in would be both
+# slow and wrong.
+src/server/.venv
+
+# Byte code compiled by a different interpreter version.
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+src/server/.coverage
+
+# Not part of the service.
+src/server/demo_walkthrough.py
+src/server/seed_demo.py
+src/server/tests
+
+# Client build output and installs. The client image runs its own npm ci and
+# build, so host copies are both slow to send and wrong for the image.
+src/client/node_modules
+src/client/dist
+src/client/coverage
+src/client/.eslintcache
+src/client/.env*
+
+# Repository content that is not part of either image.
+.git
+.github
+docs
+tests
+ops/observability
+ops/docker/docker-compose.yml
