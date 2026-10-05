@@ -1,0 +1,189 @@
+# The whole CoverageDesk stack: database, one-shot migration, API, client,
+# gateway, Prometheus and Grafana. Run from the repository root:
+#   docker compose --env-file src/server/.env -f ops/docker/docker-compose.yml up -d
+# --env-file supplies the ${POSTGRES_*} values below; no password is written here.
+
+# Fixed so the project name does not depend on the folder this file sits in.
+name: coveragedesk
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: coveragedesk-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Compose reports the service healthy only once Postgres accepts
+      # connections, so the app is not started against a socket that is still
+      # initializing.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Runs the migrations once and exits. Deliberately a service of its own
+  # rather than a step in the application's entrypoint: #23 removed the
+  # create_all() that ran as the app booted, because a service that alters
+  # tables while starting cannot be started twice safely, and an entrypoint
+  # that migrated would reintroduce exactly that. Here the schema is brought up
+  # by one process, and only then does the API start - however many copies of
+  # it there eventually are.
+  migrate:
+    build:
+      context: ../..
+      dockerfile: ops/docker/server.Dockerfile
+    image: coveragedesk-server
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Overrides the value in .env. That file is written for a developer
+      # running uvicorn on the host, where the database is on localhost; inside
+      # this network it answers to the service name. One file serves both
+      # because the container-only difference is stated here.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    env_file:
+      - ../../src/server/.env
+    restart: "no"
+
+  # No container_name on this service or on migrate, and no published port. A
+  # fixed name allows exactly one container of that name on the daemon, and a
+  # published port can be held by exactly one container - either would forbid
+  # running a second copy of the API, which is the property the separate
+  # migration service exists to preserve. Both are gone now that the gateway is
+  # the way in, so `up --scale api=2` works. The database keeps its name: it is
+  # a singleton by nature, and the capture commands and the probe scripts
+  # address it by that name.
+  api:
+    build:
+      context: ../..
+      dockerfile: ops/docker/server.Dockerfile
+    image: coveragedesk-server
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        # Waits for the migration to finish and to have succeeded. Without the
+        # exit code in the condition the API would start against a half-built
+        # schema whenever a revision failed, and answer 500s that look like
+        # application bugs.
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # The SPA is served by the gateway on :8000, so that is where a login returns to.
+      FRONTEND_URL: http://localhost:8000
+    # Read at run time, never built in. The image carries no secret: .env is in
+    # .dockerignore, so it is not in the build context at all, and the same
+    # image can be run against another environment by pointing this elsewhere.
+    env_file:
+      - ../../src/server/.env
+    # Reachable only from inside the compose network. Nothing outside can talk
+    # to the API except through the gateway, so the rules stated there are not
+    # optional - a caller cannot route around them by addressing the service
+    # directly.
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  # The built single-page app. No host port: it is reached only through the gateway.
+  frontend:
+    build:
+      context: ../..
+      dockerfile: ops/docker/client.Dockerfile
+    image: coveragedesk-client
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # The one door. Every request arrives here and is passed to whatever copies
+  # of the API are running; see gateway/nginx.conf for what it does on the way
+  # through and why.
+  gateway:
+    image: nginx:1.29-alpine
+    container_name: coveragedesk-gateway
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    volumes:
+      # Read-only: a proxy has no reason to be able to rewrite its own rules,
+      # and a container that cannot edit its configuration is one less thing an
+      # exploit can change.
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8000:80"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/gateway-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Metrics store. No depends_on: it should keep running, and record up=0, when the API is down.
+  prometheus:
+    image: prom/prometheus:v3.13.4
+    container_name: coveragedesk-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # The SLOs are measured over 7 days; one more day of margin, and no 15-day default.
+      - --storage.tsdb.retention.time=8d
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/prometheus/rules:/etc/prometheus/rules:ro
+      - promdata:/prometheus
+    ports:
+      # Loopback only: the query API answers anyone who can reach it.
+      - "127.0.0.1:9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Dashboards, provisioned from observability/grafana. Read-only for everyone:
+  # there is no account to sign in with, so the default admin/admin is never usable.
+  grafana:
+    image: grafana/grafana:13.0.10
+    container_name: coveragedesk-grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      # Hiding the form is not enough: the API still accepts admin:admin over basic auth.
+      GF_AUTH_BASIC_ENABLED: "false"
+      # No calls home from a local stack.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  promdata:
