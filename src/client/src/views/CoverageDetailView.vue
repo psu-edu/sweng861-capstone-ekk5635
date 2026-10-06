@@ -3,6 +3,7 @@ import { useRoute } from 'vue-router'
 
 import { getCoverage } from '@/api/coverages'
 import { useRequest } from '@/composables/useRequest'
+import CoverageSummary from '@/views/CoverageSummary.vue'
 
 const NOT_FOUND = 404
 const FORBIDDEN = 403
@@ -47,5 +48,6 @@ const { state, data: coverage, error, reload } = useRequest(() => getCoverage(id
       <dd>{{ coverage.updated_at }}</dd>
     </dl>
     <p><RouterLink class="button secondary" :to="{ name: 'coverage-edit', params: { id: coverage.id } }">Edit</RouterLink></p>
+    <CoverageSummary :coverage-id="id" />
   </template>
 </template>
