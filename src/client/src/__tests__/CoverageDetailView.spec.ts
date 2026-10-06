@@ -5,11 +5,14 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 
 import { ApiError } from '@/api/client'
 import { getCoverage, type Coverage } from '@/api/coverages'
+import { getSummary } from '@/api/summaries'
 import { signIn, signOut } from '@/auth/session'
 import { createAppRouter } from '@/router'
 import CoverageDetailView from '@/views/CoverageDetailView.vue'
 
 vi.mock('@/api/coverages')
+// The summary section has its own spec; here it only needs to stay off the network.
+vi.mock('@/api/summaries')
 
 const APPLE: Coverage = {
   id: 7,
@@ -29,6 +32,7 @@ describe('CoverageDetailView', () => {
 
   beforeEach(async () => {
     vi.mocked(getCoverage).mockReset()
+    vi.mocked(getSummary).mockRejectedValue(new ApiError(404, 'No summary has been generated for this coverage yet'))
     signIn('header.payload.signature')
     scope = effectScope()
     router = scope.run(() => createAppRouter(createMemoryHistory()))!
